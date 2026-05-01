@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频帧提取工具</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Microsoft YaHei", sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; display: flex; justify-content: center; padding: 30px; }
+.container { max-width: 860px; width: 100%; }
+h1 { text-align: center; margin-bottom: 24px; color: #e94560; }
+.card { background: #16213e; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+.card h2 { font-size: 16px; margin-bottom: 14px; color: #0f3460; background: #e94560; display: inline-block; padding: 4px 14px; border-radius: 6px; color: #fff; }
+label { display: block; margin: 10px 0 4px; font-size: 14px; color: #aaa; }
+input[type=file], input[type=number], select { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #333; background: #0f3460; color: #eee; font-size: 14px; }
+input[type=range] { width: 100%; margin-top: 4px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row > div { flex: 1; min-width: 120px; }
+button { padding: 10px 28px; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: bold; transition: .2s; }
+.btn-primary { background: #e94560; color: #fff; }
+.btn-primary:hover { background: #c73650; }
+.btn-secondary { background: #0f3460; color: #eee; }
+.btn-secondary:hover { background: #1a4a8a; }
+.btn-group { display: flex; gap: 12px; margin-top: 18px; justify-content: center; }
+#info { font-size: 13px; color: #8899aa; margin-top: 10px; line-height: 1.8; }
+#preview-img { max-width: 100%; border-radius: 8px; margin-top: 12px; display: none; }
+#result { text-align: center; font-size: 15px; color: #4ecca3; margin-top: 12px; display: none; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🎬 视频帧提取工具</h1>
+
+<div class="card">
+  <h2>1. 选择视频</h2>
+  <input type="file" id="videoFile" accept="video/*">
+  <div id="info"></div>
+</div>
+
+<div class="card hidden" id="configCard">
+  <h2>2. 提取参数</h2>
+  <div class="row">
+    <div>
+      <label>输出格式</label>
+      <select id="format"><option value="png">PNG</option><option value="jpg">JPG</option></select>
+    </div>
+    <div>
+      <label>JPG 质量 (1-100)</label>
+      <input type="number" id="quality" value="95" min="1" max="100">
+    </div>
+    <div>
+      <label>抽帧间隔 (每N帧取1帧)</label>
+      <input type="number" id="interval" value="1" min="1">
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div>
+      <label>起始帧</label>
+      <input type="number" id="startFrame" value="0" min="0">
+    </div>
+    <div>
+      <label>结束帧 (-1 表示到末尾)</label>
+      <input type="number" id="endFrame" value="-1">
+    </div>
+  </div>
+</div>
+
+<div class="card hidden" id="previewCard">
+  <h2>3. 帧预览</h2>
+  <label>拖动滑块预览帧</label>
+  <input type="range" id="slider" min="0" max="0" value="0">
+  <span id="sliderVal">0</span>
+  <img id="preview-img" alt="帧预览">
+</div>
+
+<div class="card hidden" id="clipCard">
+  <h2>4. 视频剪辑</h2>
+  <p style="font-size:13px;color:#888;margin-bottom:10px">输入起止时间，格式支持 MM:SS 或 HH:MM:SS（如 1:30 表示1分30秒）</p>
+  <div class="row">
+    <div>
+      <label>开始时间</label>
+      <input type="text" id="clipStart" value="00:00" placeholder="0:00 或 00:00:00" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid #333;background:#0f3460;color:#eee;font-size:14px">
+    </div>
+    <div>
+      <label>结束时间</label>
+      <input type="text" id="clipEnd" value="00:10" placeholder="0:10 或 00:00:10" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid #333;background:#0f3460;color:#eee;font-size:14px">
+    </div>
+  </div>
+  <div class="btn-group" style="margin-top:14px">
+    <button class="btn-secondary" id="clipBtn">✂️ 剪辑视频</button>
+  </div>
+  <div id="clipResult" style="text-align:center;margin-top:12px;display:none"></div>
+</div>
+
+<div class="btn-group hidden" id="actions">
+  <button class="btn-primary" id="extractBtn">🚀 开始提取帧</button>
+</div>
+
+<div id="result"></div>
+</div>
+
+<script>
+let videoInfo = null;
+
+document.getElementById("videoFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("video", file);
+  const res = await fetch("/upload", { method: "POST", body: fd });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  videoInfo = data;
+  document.getElementById("info").innerHTML =
+    `文件: ${data.filename} | 分辨率: ${data.width}x${data.height} | ` +
+    `FPS: ${data.fps.toFixed(1)} | 总帧数: ${data.total_frames} | 时长: ${data.duration}s`;
+  document.getElementById("configCard").classList.remove("hidden");
+  document.getElementById("previewCard").classList.remove("hidden");
+  document.getElementById("actions").classList.remove("hidden");
+  document.getElementById("clipCard").classList.remove("hidden");
+  const slider = document.getElementById("slider");
+  slider.max = data.total_frames - 1;
+  slider.value = 0;
+  document.getElementById("sliderVal").textContent = "0";
+  loadPreview(0);
+});
+
+const slider = document.getElementById("slider");
+let debounce = null;
+slider.addEventListener("input", () => {
+  document.getElementById("sliderVal").textContent = slider.value;
+  clearTimeout(debounce);
+  debounce = setTimeout(() => loadPreview(parseInt(slider.value)), 150);
+});
+
+async function loadPreview(frame) {
+  const res = await fetch("/preview_frame", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: videoInfo.filename, frame })
+  });
+  const data = await res.json();
+  if (data.url) {
+    const img = document.getElementById("preview-img");
+    img.src = data.url + "?t=" + Date.now();
+    img.style.display = "block";
+  }
+}
+
+document.getElementById("extractBtn").addEventListener("click", async () => {
+  if (!videoInfo) { alert("请先上传视频"); return; }
+  const btn = document.getElementById("extractBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ 提取中...";
+  const res = await fetch("/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: videoInfo.filename,
+      format: document.getElementById("format").value,
+      quality: document.getElementById("quality").value,
+      interval: document.getElementById("interval").value,
+      start_frame: document.getElementById("startFrame").value,
+      end_frame: document.getElementById("endFrame").value,
+    })
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  btn.textContent = "🚀 开始提取帧";
+  const result = document.getElementById("result");
+  result.style.display = "block";
+  if (data.error) {
+    result.style.color = "#e94560";
+    result.textContent = "错误: " + data.error;
+  } else {
+    result.style.color = "#4ecca3";
+    result.textContent = `✅ 提取完成！共保存 ${data.saved} 帧到 ${data.output_dir}`;
+  }
+});
+
+document.getElementById("clipBtn").addEventListener("click", async () => {
+  if (!videoInfo) { alert("请先上传视频"); return; }
+  const btn = document.getElementById("clipBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ 剪辑中...";
+  const res = await fetch("/clip", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: videoInfo.filename,
+      start: document.getElementById("clipStart").value.trim(),
+      end: document.getElementById("clipEnd").value.trim(),
+    })
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  btn.textContent = "✂️ 剪辑视频";
+  const clipResult = document.getElementById("clipResult");
+  clipResult.style.display = "block";
+  if (data.error) {
+    clipResult.style.color = "#e94560";
+    clipResult.innerHTML = "错误: " + data.error;
+  } else {
+    clipResult.style.color = "#4ecca3";
+    clipResult.innerHTML = `✅ 剪辑完成！<a href="${data.download_url}" download style="color:#e94560;text-decoration:underline;margin-left:8px">📥 下载 ${data.output}</a>`;
+  }
+});
+</script>
+</body>
+</html>
